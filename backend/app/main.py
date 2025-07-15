@@ -11,7 +11,7 @@ import threading
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import db, Prospect, Campaign, Message, User, InstagramAccount, ProspectStatus, CampaignStatus
-from instagram_bot import InstagramBot
+from instagram_bot import ApifyInstagramBot
 from message_templates import MessageTemplates
 
 app = Flask(__name__)
@@ -162,12 +162,13 @@ def start_campaign(campaign_id):
     
     def run_campaign_background():
         try:
-            instagram_username = os.getenv('INSTAGRAM_USERNAME')
-            instagram_password = os.getenv('INSTAGRAM_PASSWORD')
+            instagram_session_id = os.getenv('INSTAGRAM_SESSION_ID')
             
-            if instagram_username and instagram_password:
-                bot = InstagramBot(instagram_username, instagram_password)
+            if instagram_session_id:
+                bot = ApifyInstagramBot(instagram_session_id)
                 bot.run_campaign(campaign_id)
+            else:
+                print("INSTAGRAM_SESSION_ID environment variable is required")
         except Exception as e:
             print(f"Campaign error: {str(e)}")
     
