@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
@@ -15,7 +15,7 @@ from instagram_bot import ApifyInstagramBot
 from message_templates import MessageTemplates
 from coolify_service import CoolifyService
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-change-in-production')
@@ -536,6 +536,17 @@ def detect_project_type(deployment_id):
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/')
+def serve_frontend():
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:path>')
+def serve_static_files(path):
+    try:
+        return send_from_directory(app.static_folder, path)
+    except FileNotFoundError:
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8001)
