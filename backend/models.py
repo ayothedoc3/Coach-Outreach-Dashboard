@@ -51,6 +51,7 @@ class Campaign(db.Model):
     description = db.Column(db.Text)
     hashtags = db.Column(db.Text)  # JSON string of hashtags
     target_accounts = db.Column(db.Text)  # JSON string of target accounts
+    instagram_account_id = db.Column(db.Integer, db.ForeignKey('instagram_accounts.id'), nullable=True)  # Link to Instagram account
     status = db.Column(db.Enum(CampaignStatus), default=CampaignStatus.ACTIVE)
     messages_sent = db.Column(db.Integer, default=0)
     responses_received = db.Column(db.Integer, default=0)
@@ -89,9 +90,13 @@ class InstagramAccount(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128))
+    session_id = db.Column(db.Text, nullable=False)  # Instagram session ID for Apify
     is_active = db.Column(db.Boolean, default=True)
     daily_messages_sent = db.Column(db.Integer, default=0)
+    daily_limit = db.Column(db.Integer, default=40)  # Max messages per day for this account
     last_activity = db.Column(db.DateTime)
+    last_reset_date = db.Column(db.Date, default=datetime.utcnow().date)  # Track daily limit resets
     account_status = db.Column(db.String(50), default='active')  # active, suspended, limited
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    campaigns = db.relationship('Campaign', backref='instagram_account', lazy=True)

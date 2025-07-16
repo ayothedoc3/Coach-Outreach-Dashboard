@@ -127,6 +127,13 @@ def get_campaigns():
         'description': c.description,
         'hashtags': json.loads(c.hashtags) if c.hashtags else [],
         'target_accounts': json.loads(c.target_accounts) if c.target_accounts else [],
+        'instagram_account_id': c.instagram_account_id,
+        'instagram_account': {
+            'id': c.instagram_account.id,
+            'username': c.instagram_account.username,
+            'is_active': c.instagram_account.is_active,
+            'account_status': c.instagram_account.account_status
+        } if c.instagram_account else None,
         'status': c.status.value,
         'messages_sent': c.messages_sent,
         'responses_received': c.responses_received,
@@ -145,6 +152,7 @@ def create_campaign():
         description=data.get('description', ''),
         hashtags=json.dumps(data.get('hashtags', [])),
         target_accounts=json.dumps(data.get('target_accounts', [])),
+        instagram_account_id=data.get('instagram_account_id'),  # Optional account assignment
         daily_limit=data.get('daily_limit', 50)
     )
     
@@ -162,13 +170,22 @@ def start_campaign(campaign_id):
     
     def run_campaign_background():
         try:
-            instagram_session_id = os.getenv('INSTAGRAM_SESSION_ID')
-            
-            if instagram_session_id:
-                bot = ApifyInstagramBot(instagram_session_id)
-                bot.run_campaign(campaign_id)
+            campaign = Campaign.query.get(campaign_id)
+            if campaign and campaign.instagram_account_id:
+                bot = ApifyInstagramBot(account_id=campaign.instagram_account_id)
             else:
-                print("INSTAGRAM_SESSION_ID environment variable is required")
+                best_account = ApifyInstagramBot.select_best_available_account()
+                if best_account:
+                    bot = ApifyInstagramBot(account_id=best_account.id)
+                else:
+                    instagram_session_id = os.getenv('INSTAGRAM_SESSION_ID')
+                    if instagram_session_id:
+                        bot = ApifyInstagramBot(session_id=instagram_session_id)
+                    else:
+                        print("No Instagram accounts available and INSTAGRAM_SESSION_ID not set")
+                        return
+            
+            bot.run_campaign(campaign_id)
         except Exception as e:
             print(f"Campaign error: {str(e)}")
     
@@ -290,6 +307,113 @@ def analytics_performance():
             for stat in niche_stats
         ]
     })
+
+
+@app.route('/api/instagram-accounts')
+@jwt_required()
+def get_instagram_accounts():
+    accounts = InstagramAccount.query.order_by(InstagramAccount.created_at.desc()).all()
+    
+    return jsonify([{
+        'id': acc.id,
+        'username': acc.username,
+        'is_active': acc.is_active,
+        'daily_messages_sent': acc.daily_messages_sent,
+        'daily_limit': acc.daily_limit,
+        'account_status': acc.account_status,
+        'last_activity': acc.last_activity.isoformat() if acc.last_activity else None,
+        'remaining_today': ApifyInstagramBot.get_account_daily_remaining(acc.id),
+        'created_at': acc.created_at.isoformat()
+    } for acc in accounts])
+
+@app.route('/api/instagram-accounts', methods=['POST'])
+@jwt_required()
+def create_instagram_account():
+    data = request.get_json()
+    
+    if not data.get('username') or not data.get('session_id'):
+        return jsonify({'error': 'Username and session_id are required'}), 400
+    
+    existing = InstagramAccount.query.filter_by(username=data['username']).first()
+    if existing:
+        return jsonify({'error': 'Account with this username already exists'}), 400
+    
+    account = InstagramAccount(
+        username=data['username'],
+        session_id=data['session_id'],
+        daily_limit=data.get('daily_limit', 40),
+        is_active=data.get('is_active', True)
+    )
+    
+    db.session.add(account)
+    db.session.commit()
+    
+    return jsonify({
+        'id': account.id,
+        'message': f'Instagram account {account.username} created successfully'
+    })
+
+@app.route('/api/instagram-accounts/<int:account_id>', methods=['PUT'])
+@jwt_required()
+def update_instagram_account(account_id):
+    account = InstagramAccount.query.get_or_404(account_id)
+    data = request.get_json()
+    
+    if 'session_id' in data:
+        account.session_id = data['session_id']
+    if 'daily_limit' in data:
+        account.daily_limit = data['daily_limit']
+    if 'is_active' in data:
+        account.is_active = data['is_active']
+    if 'account_status' in data:
+        account.account_status = data['account_status']
+    
+    db.session.commit()
+    
+    return jsonify({'message': f'Account {account.username} updated successfully'})
+
+@app.route('/api/instagram-accounts/<int:account_id>', methods=['DELETE'])
+@jwt_required()
+def delete_instagram_account(account_id):
+    account = InstagramAccount.query.get_or_404(account_id)
+    
+    active_campaigns = Campaign.query.filter_by(
+        instagram_account_id=account_id,
+        status=CampaignStatus.ACTIVE
+    ).count()
+    
+    if active_campaigns > 0:
+        return jsonify({
+            'error': f'Cannot delete account. It is being used by {active_campaigns} active campaign(s)'
+        }), 400
+    
+    username = account.username
+    db.session.delete(account)
+    db.session.commit()
+    
+    return jsonify({'message': f'Account {username} deleted successfully'})
+
+@app.route('/api/instagram-accounts/<int:account_id>/test', methods=['POST'])
+@jwt_required()
+def test_instagram_account(account_id):
+    """Test if an Instagram account's session ID is still valid"""
+    try:
+        bot = ApifyInstagramBot(account_id=account_id)
+        
+        account = InstagramAccount.query.get(account_id)
+        account.last_activity = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Account {account.username} session appears valid'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Account test failed: {str(e)}'
+        }), 400
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8001)

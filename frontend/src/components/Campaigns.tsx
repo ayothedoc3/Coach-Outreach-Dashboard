@@ -8,7 +8,8 @@ import {
   Users,
   MessageSquare,
   TrendingUp,
-  Target
+  Target,
+  Instagram
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -18,6 +19,12 @@ interface Campaign {
   description: string;
   hashtags: string[];
   target_accounts: string[];
+  instagram_account_id?: number;
+  instagram_account?: {
+    id: number;
+    username: string;
+    is_active: boolean;
+  };
   status: string;
   messages_sent: number;
   responses_received: number;
@@ -26,8 +33,18 @@ interface Campaign {
   created_at: string;
 }
 
+interface InstagramAccount {
+  id: number;
+  username: string;
+  is_active: boolean;
+  daily_messages_sent: number;
+  daily_limit: number;
+  account_status: string;
+}
+
 const Campaigns: React.FC = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [instagramAccounts, setInstagramAccounts] = useState<InstagramAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newCampaign, setNewCampaign] = useState({
@@ -35,13 +52,15 @@ const Campaigns: React.FC = () => {
     description: '',
     hashtags: '',
     target_accounts: '',
+    instagram_account_id: '',
     daily_limit: 50
   });
 
-  const API_BASE_URL = (import.meta.env as any).VITE_API_URL || '';
+  const API_BASE_URL = (import.meta.env as any).VITE_API_URL || 'http://localhost:8001';
 
   useEffect(() => {
     fetchCampaigns();
+    fetchInstagramAccounts();
   }, []);
 
   const fetchCampaigns = async () => {
@@ -55,12 +74,22 @@ const Campaigns: React.FC = () => {
     }
   };
 
+  const fetchInstagramAccounts = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/instagram-accounts`);
+      setInstagramAccounts(response.data);
+    } catch (error) {
+      console.error('Error fetching Instagram accounts:', error);
+    }
+  };
+
   const createCampaign = async () => {
     try {
       const campaignData = {
         ...newCampaign,
         hashtags: newCampaign.hashtags.split(',').map(h => h.trim()).filter(h => h),
-        target_accounts: newCampaign.target_accounts.split(',').map(a => a.trim()).filter(a => a)
+        target_accounts: newCampaign.target_accounts.split(',').map(a => a.trim()).filter(a => a),
+        instagram_account_id: newCampaign.instagram_account_id ? parseInt(newCampaign.instagram_account_id) : null
       };
 
       await axios.post(`${API_BASE_URL}/api/campaigns`, campaignData);
@@ -70,6 +99,7 @@ const Campaigns: React.FC = () => {
         description: '',
         hashtags: '',
         target_accounts: '',
+        instagram_account_id: '',
         daily_limit: 50
       });
       fetchCampaigns();
@@ -151,6 +181,12 @@ const Campaigns: React.FC = () => {
                 <Users className="h-4 w-4 mr-2" />
                 {campaign.target_accounts.length} target accounts
               </div>
+              {campaign.instagram_account && (
+                <div className="flex items-center text-sm text-gray-600">
+                  <Instagram className="h-4 w-4 mr-2" />
+                  @{campaign.instagram_account.username}
+                </div>
+              )}
               <div className="flex items-center text-sm text-gray-600">
                 <MessageSquare className="h-4 w-4 mr-2" />
                 {campaign.messages_sent} messages sent
@@ -263,6 +299,23 @@ const Campaigns: React.FC = () => {
                     placeholder="competitor1, competitor2"
                   />
                   <p className="mt-1 text-sm text-gray-500">Separate usernames with commas</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Instagram Account</label>
+                  <select
+                    value={newCampaign.instagram_account_id}
+                    onChange={(e) => setNewCampaign({...newCampaign, instagram_account_id: e.target.value})}
+                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">Auto-select best account</option>
+                    {instagramAccounts.filter(acc => acc.is_active).map((account) => (
+                      <option key={account.id} value={account.id}>
+                        @{account.username} ({account.daily_messages_sent}/{account.daily_limit} today)
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-sm text-gray-500">Leave empty to automatically select the best available account</p>
                 </div>
 
                 <div>

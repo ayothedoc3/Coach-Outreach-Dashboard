@@ -5,6 +5,7 @@ import Overview from './Overview';
 import Prospects from './Prospects';
 import Campaigns from './Campaigns';
 import Analytics from './Analytics';
+import InstagramAccounts from './InstagramAccounts';
 import { LogOut, Menu, X } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
@@ -20,6 +21,8 @@ const Dashboard: React.FC = () => {
         return <Prospects />;
       case 'campaigns':
         return <Campaigns />;
+      case 'accounts':
+        return <InstagramAccounts />;
       case 'analytics':
         return <Analytics />;
       default:
