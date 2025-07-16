@@ -4,7 +4,7 @@ nixPkgs = ["nodejs", "python312", "poetry"]
 [phases.install]
 cmds = [
   "cd frontend && npm install",
-  "cd backend && poetry install --no-dev"
+  "cd backend && poetry install --only=main"
 ]
 
 [phases.build]
