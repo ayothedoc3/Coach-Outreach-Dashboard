@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Settings, Trash2, TestTube, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 
 interface InstagramAccount {
@@ -99,7 +99,7 @@ const InstagramAccounts: React.FC = () => {
     }
   };
 
-  const handleTestAccount = async (accountId: number, username: string) => {
+  const handleTestAccount = async (accountId: number, _username: string) => {
     try {
       const token = localStorage.getItem('auth_token');
       const response = await fetch(`${API_BASE_URL}/api/instagram-accounts/${accountId}/test`, {
