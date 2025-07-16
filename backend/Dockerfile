@@ -28,7 +28,7 @@ COPY . .
 RUN mkdir -p /app/data
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8001
 
 # Run the application
 CMD ["python", "app/main.py"]
