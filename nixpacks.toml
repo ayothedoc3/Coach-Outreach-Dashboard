@@ -1,0 +1,21 @@
+[phases.setup]
+nixPkgs = ["nodejs", "python312", "poetry"]
+
+[phases.install]
+cmds = [
+  "cd frontend && npm install",
+  "cd backend && poetry install --no-dev"
+]
+
+[phases.build]
+cmds = [
+  "cd frontend && npm run build"
+]
+
+[start]
+cmd = "cd backend && poetry run python app/main.py"
+
+[variables]
+PORT = "8001"
+NIXPACKS_PYTHON_VERSION = "3.12"
+NIXPACKS_PYTHON_PACKAGE_MANAGER = "poetry"
