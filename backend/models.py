@@ -100,3 +100,40 @@ class InstagramAccount(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     campaigns = db.relationship('Campaign', backref='instagram_account', lazy=True)
+
+class DeploymentStatus(Enum):
+    PENDING = "pending"
+    BUILDING = "building"
+    DEPLOYING = "deploying"
+    RUNNING = "running"
+    FAILED = "failed"
+    STOPPED = "stopped"
+
+class CoolifyConfig(db.Model):
+    __tablename__ = 'coolify_configs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    api_url = db.Column(db.String(500), nullable=False)  # Coolify instance URL
+    api_token = db.Column(db.Text, nullable=False)  # Coolify API token
+    team_id = db.Column(db.String(100))  # Coolify team ID
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    deployments = db.relationship('Deployment', backref='coolify_config', lazy=True)
+
+class Deployment(db.Model):
+    __tablename__ = 'deployments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    github_url = db.Column(db.String(500), nullable=False)
+    project_type = db.Column(db.String(50), default='unknown')  # nodejs, python, docker, etc.
+    coolify_config_id = db.Column(db.Integer, db.ForeignKey('coolify_configs.id'), nullable=False)
+    coolify_app_id = db.Column(db.String(100))  # Coolify application ID
+    status = db.Column(db.Enum(DeploymentStatus), default=DeploymentStatus.PENDING)
+    build_logs = db.Column(db.Text)
+    deployment_url = db.Column(db.String(500))
+    environment_variables = db.Column(db.Text)  # JSON string of env vars
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

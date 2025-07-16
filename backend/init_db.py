@@ -7,7 +7,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask
-from models import db, InstagramAccount, Campaign, Prospect, Message, User
+from models import db, InstagramAccount, Campaign, Prospect, Message, User, CoolifyConfig, Deployment
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///coach_outreach.db'

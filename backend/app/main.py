@@ -10,9 +10,10 @@ import threading
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import db, Prospect, Campaign, Message, User, InstagramAccount, ProspectStatus, CampaignStatus
+from models import db, Prospect, Campaign, Message, User, InstagramAccount, ProspectStatus, CampaignStatus, CoolifyConfig, Deployment, DeploymentStatus
 from instagram_bot import ApifyInstagramBot
 from message_templates import MessageTemplates
+from coolify_service import CoolifyService
 
 app = Flask(__name__)
 
@@ -414,6 +415,123 @@ def test_instagram_account(account_id):
             'status': 'error',
             'message': f'Account test failed: {str(e)}'
         }), 400
+
+@app.route('/api/coolify-configs')
+@jwt_required()
+def get_coolify_configs():
+    configs = CoolifyConfig.query.filter_by(is_active=True).all()
+    return jsonify([{
+        'id': c.id,
+        'name': c.name,
+        'api_url': c.api_url,
+        'team_id': c.team_id,
+        'created_at': c.created_at.isoformat()
+    } for c in configs])
+
+@app.route('/api/coolify-configs', methods=['POST'])
+@jwt_required()
+def create_coolify_config():
+    data = request.get_json()
+    
+    config = CoolifyConfig(
+        name=data['name'],
+        api_url=data['api_url'],
+        api_token=data['api_token'],
+        team_id=data.get('team_id')
+    )
+    
+    db.session.add(config)
+    db.session.commit()
+    
+    return jsonify({'id': config.id, 'message': 'Coolify config created successfully'})
+
+@app.route('/api/deployments')
+@jwt_required()
+def get_deployments():
+    deployments = Deployment.query.order_by(Deployment.created_at.desc()).all()
+    
+    return jsonify([{
+        'id': d.id,
+        'name': d.name,
+        'github_url': d.github_url,
+        'project_type': d.project_type,
+        'status': d.status.value,
+        'deployment_url': d.deployment_url,
+        'coolify_config': {
+            'id': d.coolify_config.id,
+            'name': d.coolify_config.name
+        } if d.coolify_config else None,
+        'created_at': d.created_at.isoformat()
+    } for d in deployments])
+
+@app.route('/api/deployments', methods=['POST'])
+@jwt_required()
+def create_deployment():
+    data = request.get_json()
+    
+    deployment = Deployment(
+        name=data['name'],
+        github_url=data['github_url'],
+        coolify_config_id=data['coolify_config_id'],
+        environment_variables=json.dumps(data.get('environment_variables', {}))
+    )
+    
+    db.session.add(deployment)
+    db.session.commit()
+    
+    try:
+        coolify_service = CoolifyService(deployment.coolify_config_id)
+        if coolify_service.create_application(deployment):
+            coolify_service.deploy_application(deployment)
+    except Exception as e:
+        deployment.status = DeploymentStatus.FAILED
+        db.session.commit()
+        return jsonify({'error': f'Deployment failed: {str(e)}'}), 500
+    
+    return jsonify({'id': deployment.id, 'message': 'Deployment started successfully'})
+
+@app.route('/api/deployments/<int:deployment_id>/status')
+@jwt_required()
+def get_deployment_status(deployment_id):
+    deployment = Deployment.query.get_or_404(deployment_id)
+    
+    try:
+        coolify_service = CoolifyService(deployment.coolify_config_id)
+        status_info = coolify_service.get_deployment_status(deployment)
+        return jsonify(status_info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deployments/<int:deployment_id>/environment-variables', methods=['PUT'])
+@jwt_required()
+def update_deployment_env_vars(deployment_id):
+    deployment = Deployment.query.get_or_404(deployment_id)
+    data = request.get_json()
+    
+    try:
+        coolify_service = CoolifyService(deployment.coolify_config_id)
+        if coolify_service.update_environment_variables(deployment, data['environment_variables']):
+            return jsonify({'message': 'Environment variables updated successfully'})
+        else:
+            return jsonify({'error': 'Failed to update environment variables'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deployments/<int:deployment_id>/detect-project', methods=['POST'])
+@jwt_required()
+def detect_project_type(deployment_id):
+    deployment = Deployment.query.get_or_404(deployment_id)
+    
+    try:
+        coolify_service = CoolifyService(deployment.coolify_config_id)
+        project_type, detection_info = coolify_service.detect_project_type(deployment.github_url)
+        
+        return jsonify({
+            'project_type': project_type,
+            'detection_info': detection_info
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8001)
