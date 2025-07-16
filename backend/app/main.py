@@ -33,6 +33,10 @@ with app.app_context():
 def healthz():
     return {"status": "ok"}
 
+@app.route('/api/healthz')
+def api_healthz():
+    return {"status": "ok"}
+
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     if request.content_type == 'application/json':
