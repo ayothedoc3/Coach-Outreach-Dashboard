@@ -54,7 +54,7 @@ npm run dev
 docker-compose up -d
 ```
 - Frontend: http://localhost:3000
-- Backend: http://localhost:8000
+- Backend: http://localhost:8001
 
 ## 📁 Project Structure
 

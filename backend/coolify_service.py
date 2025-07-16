@@ -206,7 +206,7 @@ class CoolifyService:
         """Get default port for project type"""
         default_ports = {
             'nodejs': '3000',
-            'python': '8000',
+            'python': '8001',
             'java': '8080',
             'go': '8080',
             'static': '80'
