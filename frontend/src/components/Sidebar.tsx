@@ -5,7 +5,8 @@ import {
   Target, 
   TrendingUp, 
   Instagram,
-  Settings 
+  Settings,
+  Rocket
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,7 +26,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'prospects', label: 'Prospects', icon: Users },
     { id: 'campaigns', label: 'Campaigns', icon: Target },
-    { id: 'accounts', label: 'Accounts', icon: Settings },
+    { id: 'deploy', label: 'Deploy', icon: Rocket },
+    { id: 'accounts', label: 'Accounts', icon: Instagram },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   ];
 
