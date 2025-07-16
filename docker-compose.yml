@@ -6,7 +6,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8001"
     environment:
       - FLASK_ENV=production
       - DATABASE_URL=sqlite:///coach_outreach.db
@@ -14,8 +14,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    depends_on:
-      - db
     restart: unless-stopped
 
   frontend:
@@ -26,12 +24,6 @@ services:
       - "3000:80"
     depends_on:
       - backend
-    restart: unless-stopped
-
-  db:
-    image: sqlite:latest
-    volumes:
-      - ./data:/data
     restart: unless-stopped
 
 volumes:
