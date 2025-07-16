@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   TrendingUp, 
   Download,
@@ -204,7 +204,7 @@ const Analytics: React.FC = () => {
                 dataKey="count"
                 label={({ niche, percent }) => `${niche} ${(percent * 100).toFixed(0)}%`}
               >
-                {(analyticsData?.niche_distribution || []).map((entry, index) => (
+                {(analyticsData?.niche_distribution || []).map((_entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
@@ -218,7 +218,7 @@ const Analytics: React.FC = () => {
         <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Conversion Funnel</h3>
           <div className="space-y-4">
-            {mockConversionData.map((stage, index) => (
+            {mockConversionData.map((stage, _index) => (
               <div key={stage.stage} className="relative">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium text-gray-700">{stage.stage}</span>

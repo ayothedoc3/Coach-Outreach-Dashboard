@@ -1,11 +1,9 @@
-import React from 'react';
 import { 
   BarChart3, 
   Users, 
   Target, 
   TrendingUp, 
   Instagram,
-  Settings,
   Rocket
 } from 'lucide-react';
 
