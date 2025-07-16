@@ -60,11 +60,11 @@ docker-compose up -d
 
 ```
 coach-outreach-dashboard/
-├── backend/                 # Flask API + InstaPy automation
+├── backend/                 # Flask API + Apify automation
 │   ├── app/
 │   │   └── main.py         # Main Flask application
 │   ├── models.py           # Database models
-│   ├── instagram_bot.py    # InstaPy automation logic
+│   ├── instagram_bot.py    # Apify Instagram automation logic
 │   ├── message_templates.py # Personalized DM templates
 │   ├── pyproject.toml      # Python dependencies
 │   └── Dockerfile          # Backend container
@@ -84,10 +84,10 @@ coach-outreach-dashboard/
 
 ## 🔧 Features
 
-### Backend (Flask + InstaPy)
+### Backend (Flask + Apify)
 - **Authentication**: JWT-based login system
 - **Database**: SQLite with prospect/campaign tracking
-- **InstaPy Integration**: Automated Instagram interactions
+- **Apify Integration**: Instagram DMs Automation via Apify actor
 - **API Endpoints**: RESTful API for dashboard
 - **Safety Features**: Rate limiting, proxy support, account protection
 
@@ -185,21 +185,21 @@ coach-outreach-dashboard/
 ### Environment Variables (.env)
 
 ```env
-# Instagram Credentials
-INSTAGRAM_USERNAME=your_username
-INSTAGRAM_PASSWORD=your_password
-
 # API Configuration
 SECRET_KEY=your-secret-key
 JWT_SECRET_KEY=your-jwt-secret
 
-# OpenAI Integration
+# Apify Configuration (Required)
+APIFY_API_TOKEN=your_apify_api_token
+APIFY_ACTOR_ID=deepanshusharm/instagram-dms-automation
+INSTAGRAM_SESSION_ID=your_instagram_session_id
+
+# OpenAI Integration (Optional)
 OPENAI_API_KEY=your-openai-key
 
 # Automation Settings
 DAILY_MESSAGE_LIMIT=50
-MESSAGE_DELAY=120
-HEADLESS=true
+MESSAGE_DELAY=60
 
 # Database
 DATABASE_URL=sqlite:///coach_outreach.db
@@ -207,6 +207,63 @@ DATABASE_URL=sqlite:///coach_outreach.db
 # Flask Configuration
 FLASK_ENV=development
 ```
+
+## 🔑 Getting Required Credentials
+
+### 1. Apify API Token
+
+1. **Sign up for Apify account**:
+   - Go to [apify.com](https://apify.com) and create a free account
+   - The free tier includes $5 monthly credit which covers basic usage
+
+2. **Get your API token**:
+   - Log into your Apify Console
+   - Go to **Settings** → **Integrations** → **API tokens**
+   - Click **Create new token**
+   - Give it a name (e.g., "Coach Outreach Dashboard")
+   - Copy the generated token
+   - Add to your `.env` file as `APIFY_API_TOKEN=your_token_here`
+
+### 2. Instagram Session ID
+
+⚠️ **Important**: Use a dedicated Instagram account for automation, not your personal account.
+
+1. **Log into Instagram**:
+   - Open your browser and go to [instagram.com](https://instagram.com)
+   - Log in with your automation account credentials
+
+2. **Get Session ID from Browser**:
+   - Press **F12** to open Developer Tools
+   - Go to the **Application** tab (Chrome) or **Storage** tab (Firefox)
+   - In the left sidebar, expand **Cookies** → **https://www.instagram.com**
+   - Find the cookie named `sessionid`
+   - Copy the **Value** (long string of characters)
+   - Add to your `.env` file as `INSTAGRAM_SESSION_ID=your_session_id_here`
+
+3. **Alternative Method (Network Tab)**:
+   - Open Developer Tools and go to **Network** tab
+   - Refresh the Instagram page
+   - Click on any request to instagram.com
+   - In the **Request Headers**, find the `Cookie` header
+   - Look for `sessionid=` and copy the value after the equals sign
+
+### 3. OpenAI API Key (Optional)
+
+Only needed if you want AI-powered bio analysis for better prospect qualification:
+
+1. **Get OpenAI API Key**:
+   - Go to [platform.openai.com](https://platform.openai.com)
+   - Sign up or log in to your account
+   - Go to **API Keys** section
+   - Click **Create new secret key**
+   - Copy the key and add to `.env` as `OPENAI_API_KEY=your_key_here`
+
+## 💰 Cost Breakdown
+
+- **Apify Actor**: $18/month + usage fees
+- **Safety Limits**: 5 DMs per run, 30-40 per day maximum
+- **OpenAI API**: ~$0.01-0.05 per bio analysis (optional)
+- **Total Monthly**: ~$20-25 for moderate usage
 
 ### Message Templates
 
