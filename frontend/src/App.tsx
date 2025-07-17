@@ -5,7 +5,11 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import './App.css';
 
 function AppContent() {
-  const { token } = useAuth();
+  const { token, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
 
   if (!token) {
     return <Login />;

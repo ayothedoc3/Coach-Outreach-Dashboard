@@ -52,7 +52,7 @@ class Prospect(ProspectBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class CampaignBase(BaseModel):
     name: str
@@ -75,7 +75,7 @@ class Campaign(CampaignBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class MessageBase(BaseModel):
     prospect_id: int
@@ -94,7 +94,7 @@ class Message(MessageBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserBase(BaseModel):
     username: str
@@ -109,7 +109,7 @@ class User(UserBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class InstagramAccountBase(BaseModel):
     username: str
@@ -129,7 +129,7 @@ class InstagramAccount(InstagramAccountBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class CoolifyConfigBase(BaseModel):
     name: str
@@ -146,7 +146,7 @@ class CoolifyConfig(CoolifyConfigBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class DeploymentBase(BaseModel):
     name: str
@@ -168,7 +168,7 @@ class Deployment(DeploymentBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Token(BaseModel):
     access_token: str

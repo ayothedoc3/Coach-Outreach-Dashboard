@@ -5,8 +5,8 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from typing import Optional
 
-from . import schemas, models, crud
-from .database import get_db
+from app import schemas, models, crud
+from app.database import get_db
 
 router = APIRouter()
 
