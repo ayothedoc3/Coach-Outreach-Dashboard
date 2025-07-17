@@ -7,6 +7,7 @@ from typing import Optional
 
 from app import schemas, models, crud
 from app.database import get_db
+from app.crud import pwd_context
 
 router = APIRouter()
 
@@ -28,7 +29,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 @router.post("/auth/login", response_model=schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    if not (form_data.username == 'admin' and form_data.password == 'admin'):
+    user = crud.get_user_by_username(db, username=form_data.username)
+    if not user or not pwd_context.verify(form_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -36,7 +38,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": form_data.username}, expires_delta=access_token_expires
+        data={"sub": user.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
