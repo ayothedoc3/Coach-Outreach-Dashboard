@@ -6,7 +6,8 @@ from typing import List, Dict, Optional
 from apify_client import ApifyClient
 import openai
 import os
-from models import db, Prospect, Campaign, Message, ProspectStatus, InstagramAccount
+from models import Prospect, Campaign, Message, ProspectStatus, InstagramAccount, SessionLocal
+from sqlalchemy.orm import Session
 from message_templates import MessageTemplates
 
 class ApifyInstagramBot:
@@ -16,13 +17,17 @@ class ApifyInstagramBot:
         Initialize bot with either an account_id (preferred) or session_id (fallback)
         """
         if account_id:
-            self.account = InstagramAccount.query.get(account_id)
-            if not self.account:
-                raise ValueError(f"Instagram account with ID {account_id} not found")
-            if not self.account.is_active:
-                raise ValueError(f"Instagram account {self.account.username} is not active")
-            self.session_id = self.account.session_id
-            self.account_id = account_id
+            db = SessionLocal()
+            try:
+                self.account = db.query(InstagramAccount).filter(InstagramAccount.id == account_id).first()
+                if not self.account:
+                    raise ValueError(f"Instagram account with ID {account_id} not found")
+                if not self.account.is_active:
+                    raise ValueError(f"Instagram account {self.account.username} is not active")
+                self.session_id = self.account.session_id
+                self.account_id = account_id
+            finally:
+                db.close()
         elif session_id:
             self.session_id = session_id
             self.account = None
@@ -45,55 +50,69 @@ class ApifyInstagramBot:
         """
         Select the best available Instagram account based on daily limits and status
         """
-        today = date.today()
-        
-        accounts_to_reset = InstagramAccount.query.filter(
-            InstagramAccount.last_reset_date < today,
-            InstagramAccount.is_active == True
-        ).all()
-        
-        for account in accounts_to_reset:
-            account.daily_messages_sent = 0
-            account.last_reset_date = today
-        
-        db.session.commit()
-        
-        available_account = InstagramAccount.query.filter(
-            InstagramAccount.is_active == True,
-            InstagramAccount.account_status == 'active',
-            InstagramAccount.daily_messages_sent < InstagramAccount.daily_limit
-        ).order_by(InstagramAccount.daily_messages_sent.asc()).first()
-        
-        return available_account
+        db = SessionLocal()
+        try:
+            today = date.today()
+            
+            accounts_to_reset = db.query(InstagramAccount).filter(
+                InstagramAccount.last_reset_date < today,
+                InstagramAccount.is_active == True
+            ).all()
+            
+            for account in accounts_to_reset:
+                account.daily_messages_sent = 0
+                account.last_reset_date = today
+            
+            db.commit()
+            
+            available_account = db.query(InstagramAccount).filter(
+                InstagramAccount.is_active == True,
+                InstagramAccount.account_status == 'active',
+                InstagramAccount.daily_messages_sent < InstagramAccount.daily_limit
+            ).order_by(InstagramAccount.daily_messages_sent.asc()).first()
+            
+            return available_account
+        finally:
+            db.close()
     
     @staticmethod
     def get_account_daily_remaining(account_id: int) -> int:
         """
         Get remaining daily message limit for an account
         """
-        account = InstagramAccount.query.get(account_id)
-        if not account:
-            return 0
-        
-        today = date.today()
-        if account.last_reset_date < today:
-            return account.daily_limit
-        
-        return max(0, account.daily_limit - account.daily_messages_sent)
+        db = SessionLocal()
+        try:
+            account = db.query(InstagramAccount).filter(InstagramAccount.id == account_id).first()
+            if not account:
+                return 0
+            
+            today = date.today()
+            if account.last_reset_date < today:
+                return account.daily_limit
+            
+            return max(0, account.daily_limit - account.daily_messages_sent)
+        finally:
+            db.close()
     
     def update_account_usage(self, messages_sent: int):
         """
         Update the account's daily message count
         """
         if self.account:
-            today = date.today()
-            if self.account.last_reset_date < today:
-                self.account.daily_messages_sent = 0
-                self.account.last_reset_date = today
-            
-            self.account.daily_messages_sent += messages_sent
-            self.account.last_activity = datetime.utcnow()
-            db.session.commit()
+            db = SessionLocal()
+            try:
+                account = db.query(InstagramAccount).filter(InstagramAccount.id == self.account_id).first()
+                if account:
+                    today = date.today()
+                    if account.last_reset_date < today:
+                        account.daily_messages_sent = 0
+                        account.last_reset_date = today
+                    
+                    account.daily_messages_sent += messages_sent
+                    account.last_activity = datetime.utcnow()
+                    db.commit()
+            finally:
+                db.close()
 
     def analyze_bio_with_ai(self, bio: str) -> Dict:
         """Use OpenAI to analyze bio and score prospect"""
@@ -183,8 +202,9 @@ class ApifyInstagramBot:
     
     def run_campaign(self, campaign_id: int):
         """Run a campaign with safety limits using Apify"""
+        db = SessionLocal()
         try:
-            campaign = Campaign.query.get(campaign_id)
+            campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
             if not campaign or campaign.status != 'active':
                 print(f"Campaign {campaign_id} is not active or not found")
                 return
@@ -192,7 +212,7 @@ class ApifyInstagramBot:
             if campaign.instagram_account_id:
                 if self.account_id != campaign.instagram_account_id:
                     print(f"Switching to campaign-specific account {campaign.instagram_account_id}")
-                    self.account = InstagramAccount.query.get(campaign.instagram_account_id)
+                    self.account = db.query(InstagramAccount).filter(InstagramAccount.id == campaign.instagram_account_id).first()
                     if not self.account or not self.account.is_active:
                         print(f"Campaign account {campaign.instagram_account_id} is not available")
                         return
@@ -213,9 +233,10 @@ class ApifyInstagramBot:
                 return
             
             today = datetime.now().date()
-            campaign_messages_today = Message.query.filter(
+            from sqlalchemy import func
+            campaign_messages_today = db.query(Message).filter(
                 Message.campaign_id == campaign_id,
-                db.func.date(Message.sent_at) == today
+                func.date(Message.sent_at) == today
             ).count()
             
             campaign_remaining = campaign.daily_limit - campaign_messages_today
@@ -225,7 +246,7 @@ class ApifyInstagramBot:
                 print(f"Daily limit reached for campaign {campaign_id}")
                 return
             
-            prospects = Prospect.query.filter(
+            prospects = db.query(Prospect).filter(
                 Prospect.status == ProspectStatus.QUALIFIED,
                 Prospect.dm_sent == False
             ).limit(remaining_limit).all()
@@ -275,7 +296,7 @@ class ApifyInstagramBot:
                             campaign_id=campaign_id,
                             content=message_content
                         )
-                        db.session.add(message)
+                        db.add(message)
                         
                         campaign.messages_sent += 1
                         messages_sent += 1
@@ -291,10 +312,12 @@ class ApifyInstagramBot:
             
             self.update_account_usage(messages_sent)
             
-            db.session.commit()
+            db.commit()
             print(f"Campaign completed. Sent {messages_sent} messages using account {self.account.username}.")
             
         except Exception as e:
             print(f"Campaign error: {str(e)}")
-            db.session.rollback()
+            db.rollback()
             raise
+        finally:
+            db.close()

@@ -2,23 +2,28 @@ import requests
 import json
 import time
 from typing import Dict, List, Optional, Tuple
-from models import db, CoolifyConfig, Deployment, DeploymentStatus
+from models import CoolifyConfig, Deployment, DeploymentStatus, SessionLocal
+from sqlalchemy.orm import Session
 import re
 from urllib.parse import urlparse
 
 class CoolifyService:
     
     def __init__(self, config_id: int):
-        self.config = CoolifyConfig.query.get(config_id)
-        if not self.config:
-            raise ValueError(f"Coolify config with ID {config_id} not found")
-        
-        self.api_url = self.config.api_url.rstrip('/')
-        self.headers = {
-            'Authorization': f'Bearer {self.config.api_token}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
+        db = SessionLocal()
+        try:
+            self.config = db.query(CoolifyConfig).filter(CoolifyConfig.id == config_id).first()
+            if not self.config:
+                raise ValueError(f"Coolify config with ID {config_id} not found")
+            
+            self.api_url = self.config.api_url.rstrip('/')
+            self.headers = {
+                'Authorization': f'Bearer {self.config.api_token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        finally:
+            db.close()
     
     def detect_project_type(self, github_url: str) -> Tuple[str, Dict]:
         """Detect project type from GitHub repository"""
@@ -68,6 +73,7 @@ class CoolifyService:
     
     def create_application(self, deployment: Deployment) -> bool:
         """Create application in Coolify"""
+        db = SessionLocal()
         try:
             project_type, detection_info = self.detect_project_type(deployment.github_url)
             deployment.project_type = project_type
@@ -91,7 +97,7 @@ class CoolifyService:
                 app_data = response.json()
                 deployment.coolify_app_id = app_data.get('uuid', app_data.get('id'))
                 deployment.status = DeploymentStatus.BUILDING
-                db.session.commit()
+                db.commit()
                 return True
             else:
                 print(f"Failed to create application: {response.status_code} - {response.text}")
@@ -100,11 +106,14 @@ class CoolifyService:
         except Exception as e:
             print(f"Error creating application: {str(e)}")
             deployment.status = DeploymentStatus.FAILED
-            db.session.commit()
+            db.commit()
             return False
+        finally:
+            db.close()
     
     def deploy_application(self, deployment: Deployment) -> bool:
         """Deploy application in Coolify"""
+        db = SessionLocal()
         try:
             if not deployment.coolify_app_id:
                 return False
@@ -116,7 +125,7 @@ class CoolifyService:
             
             if response.status_code in [200, 201]:
                 deployment.status = DeploymentStatus.DEPLOYING
-                db.session.commit()
+                db.commit()
                 return True
             else:
                 print(f"Failed to deploy application: {response.status_code} - {response.text}")
@@ -125,9 +134,12 @@ class CoolifyService:
         except Exception as e:
             print(f"Error deploying application: {str(e)}")
             return False
+        finally:
+            db.close()
     
     def get_deployment_status(self, deployment: Deployment) -> Dict:
         """Get deployment status from Coolify"""
+        db = SessionLocal()
         try:
             if not deployment.coolify_app_id:
                 return {'status': 'unknown'}
@@ -151,7 +163,7 @@ class CoolifyService:
                 
                 deployment.status = status_mapping.get(status, DeploymentStatus.PENDING)
                 deployment.deployment_url = app_data.get('fqdn', app_data.get('url'))
-                db.session.commit()
+                db.commit()
                 
                 return {
                     'status': deployment.status.value,
@@ -164,9 +176,12 @@ class CoolifyService:
         except Exception as e:
             print(f"Error getting deployment status: {str(e)}")
             return {'status': 'error', 'message': str(e)}
+        finally:
+            db.close()
     
     def update_environment_variables(self, deployment: Deployment, env_vars: Dict) -> bool:
         """Update environment variables for deployment"""
+        db = SessionLocal()
         try:
             if not deployment.coolify_app_id:
                 return False
@@ -179,7 +194,7 @@ class CoolifyService:
             
             if response.status_code in [200, 201]:
                 deployment.environment_variables = json.dumps(env_vars)
-                db.session.commit()
+                db.commit()
                 return True
             else:
                 print(f"Failed to update environment variables: {response.status_code} - {response.text}")
@@ -188,6 +203,8 @@ class CoolifyService:
         except Exception as e:
             print(f"Error updating environment variables: {str(e)}")
             return False
+        finally:
+            db.close()
     
     def _get_build_pack(self, project_type: str) -> str:
         """Get appropriate build pack for project type"""

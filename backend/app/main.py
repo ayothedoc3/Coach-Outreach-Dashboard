@@ -1,541 +1,599 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime, timedelta, date
+from typing import Optional, List
 import os
 import sys
 import json
-from datetime import datetime, timedelta
-import threading
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import db, Prospect, Campaign, Message, User, InstagramAccount, ProspectStatus, CampaignStatus, CoolifyConfig, Deployment, DeploymentStatus
+from models import Base, engine, Prospect, Campaign, Message, User, ProspectStatus, CampaignStatus, InstagramAccount, CoolifyConfig, Deployment, DeploymentStatus
+from database import get_db
+from schemas import *
+from auth import authenticate_user, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 from instagram_bot import ApifyInstagramBot
 from message_templates import MessageTemplates
 from coolify_service import CoolifyService
 
-app = Flask(__name__)
+Base.metadata.create_all(bind=engine)
 
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///coach_outreach.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app = FastAPI(title="Coach Outreach Dashboard API", version="1.0.0")
 
-db.init_app(app)
-jwt = JWTManager(app)
-CORS(app, origins="*", supports_credentials=False, allow_headers=["Content-Type", "Authorization"], methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-with app.app_context():
-    db.create_all()
-
-@app.route('/healthz')
+@app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "healthy"}
 
-@app.route('/api/healthz')
+@app.get("/api/healthz")
 def api_healthz():
-    return {"status": "ok"}
+    return {"status": "healthy"}
 
-@app.route('/api/auth/login', methods=['POST'])
-def login():
-    if request.content_type == 'application/json':
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
-    else:
-        username = request.form.get('username')
-        password = request.form.get('password')
-    
-    if username == 'admin' and password == 'admin':
-        access_token = create_access_token(identity=username)
-        return jsonify({'access_token': access_token})
-    
-    return jsonify({'error': 'Invalid credentials'}), 401
-
-@app.route('/api/dashboard/stats')
-@jwt_required()
-def dashboard_stats():
-    total_prospects = Prospect.query.count()
-    qualified_prospects = Prospect.query.filter_by(status=ProspectStatus.QUALIFIED).count()
-    messages_sent = Message.query.count()
-    responses_received = Prospect.query.filter_by(response_received=True).count()
-    
-    today = datetime.now().date()
-    messages_today = Message.query.filter(
-        db.func.date(Message.sent_at) == today
-    ).count()
-    
-    week_ago = datetime.now() - timedelta(days=7)
-    recent_prospects = Prospect.query.filter(
-        Prospect.created_at >= week_ago
-    ).count()
-    
-    return jsonify({
-        'total_prospects': total_prospects,
-        'qualified_prospects': qualified_prospects,
-        'messages_sent': messages_sent,
-        'responses_received': responses_received,
-        'messages_today': messages_today,
-        'recent_prospects': recent_prospects,
-        'response_rate': round((responses_received / messages_sent * 100) if messages_sent > 0 else 0, 1)
-    })
-
-@app.route('/api/prospects')
-@jwt_required()
-def get_prospects():
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)
-    status = request.args.get('status')
-    niche = request.args.get('niche')
-    
-    query = Prospect.query
-    
-    if status:
-        query = query.filter_by(status=ProspectStatus(status))
-    if niche:
-        query = query.filter_by(niche=niche)
-    
-    prospects = query.order_by(Prospect.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
+@app.post("/api/auth/login", response_model=Token)
+async def login(user_login: UserLogin, db: Session = Depends(get_db)):
+    user = authenticate_user(db, user_login.username, user_login.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
     )
-    
-    return jsonify({
-        'prospects': [{
-            'id': p.id,
-            'username': p.username,
-            'full_name': p.full_name,
-            'followers': p.followers,
-            'engagement_rate': p.engagement_rate,
-            'bio': p.bio,
-            'coach_score': p.coach_score,
-            'value_score': p.value_score,
-            'niche': p.niche,
-            'status': p.status.value,
-            'dm_sent': p.dm_sent,
-            'response_received': p.response_received,
-            'created_at': p.created_at.isoformat()
-        } for p in prospects.items],
-        'total': prospects.total,
-        'pages': prospects.pages,
-        'current_page': page
-    })
+    return {"access_token": access_token, "token_type": "bearer"}
 
-@app.route('/api/campaigns')
-@jwt_required()
-def get_campaigns():
-    campaigns = Campaign.query.order_by(Campaign.created_at.desc()).all()
-    
-    return jsonify([{
-        'id': c.id,
-        'name': c.name,
-        'description': c.description,
-        'hashtags': json.loads(c.hashtags) if c.hashtags else [],
-        'target_accounts': json.loads(c.target_accounts) if c.target_accounts else [],
-        'instagram_account_id': c.instagram_account_id,
-        'instagram_account': {
-            'id': c.instagram_account.id,
-            'username': c.instagram_account.username,
-            'is_active': c.instagram_account.is_active,
-            'account_status': c.instagram_account.account_status
-        } if c.instagram_account else None,
-        'status': c.status.value,
-        'messages_sent': c.messages_sent,
-        'responses_received': c.responses_received,
-        'conversions': c.conversions,
-        'daily_limit': c.daily_limit,
-        'created_at': c.created_at.isoformat()
-    } for c in campaigns])
+@app.get("/api/dashboard/stats", response_model=DashboardStats)
+async def dashboard_stats(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        total_prospects = db.query(Prospect).count()
+        qualified_prospects = db.query(Prospect).filter(Prospect.status == ProspectStatus.QUALIFIED).count()
+        messages_sent = db.query(Message).count()
+        responses_received = db.query(Prospect).filter(Prospect.response_received == True).count()
+        
+        conversion_rate = 0.0
+        if messages_sent > 0:
+            conversions = db.query(Message).filter(Message.is_conversion == True).count()
+            conversion_rate = (conversions / messages_sent) * 100
+        
+        active_campaigns = db.query(Campaign).filter(Campaign.status == CampaignStatus.ACTIVE).count()
+        
+        return DashboardStats(
+            total_prospects=total_prospects,
+            qualified_prospects=qualified_prospects,
+            messages_sent=messages_sent,
+            responses_received=responses_received,
+            conversion_rate=round(conversion_rate, 2),
+            active_campaigns=active_campaigns
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/campaigns', methods=['POST'])
-@jwt_required()
-def create_campaign():
-    data = request.get_json()
-    
-    campaign = Campaign(
-        name=data['name'],
-        description=data.get('description', ''),
-        hashtags=json.dumps(data.get('hashtags', [])),
-        target_accounts=json.dumps(data.get('target_accounts', [])),
-        instagram_account_id=data.get('instagram_account_id'),  # Optional account assignment
-        daily_limit=data.get('daily_limit', 50)
-    )
-    
-    db.session.add(campaign)
-    db.session.commit()
-    
-    return jsonify({'id': campaign.id, 'message': 'Campaign created successfully'})
-
-@app.route('/api/campaigns/<int:campaign_id>/start', methods=['POST'])
-@jwt_required()
-def start_campaign(campaign_id):
-    campaign = Campaign.query.get_or_404(campaign_id)
-    campaign.status = CampaignStatus.ACTIVE
-    db.session.commit()
-    
-    def run_campaign_background():
-        try:
-            campaign = Campaign.query.get(campaign_id)
-            if campaign and campaign.instagram_account_id:
-                bot = ApifyInstagramBot(account_id=campaign.instagram_account_id)
-            else:
-                best_account = ApifyInstagramBot.select_best_available_account()
-                if best_account:
-                    bot = ApifyInstagramBot(account_id=best_account.id)
-                else:
-                    instagram_session_id = os.getenv('INSTAGRAM_SESSION_ID')
-                    if instagram_session_id:
-                        bot = ApifyInstagramBot(session_id=instagram_session_id)
-                    else:
-                        print("No Instagram accounts available and INSTAGRAM_SESSION_ID not set")
-                        return
-            
-            bot.run_campaign(campaign_id)
-        except Exception as e:
-            print(f"Campaign error: {str(e)}")
-    
-    
-    return jsonify({'message': 'Campaign started successfully'})
-
-@app.route('/api/campaigns/<int:campaign_id>/pause', methods=['POST'])
-@jwt_required()
-def pause_campaign(campaign_id):
-    campaign = Campaign.query.get_or_404(campaign_id)
-    campaign.status = CampaignStatus.PAUSED
-    db.session.commit()
-    
-    return jsonify({'message': 'Campaign paused successfully'})
-
-@app.route('/api/scrape/hashtag', methods=['POST'])
-@jwt_required()
-def scrape_hashtag():
-    data = request.get_json()
-    hashtag = data.get('hashtag')
-    limit = data.get('limit', 50)
-    
-    if not hashtag:
-        return jsonify({'error': 'Hashtag is required'}), 400
-    
-    mock_prospects = [
-        {
-            'username': f'coach_{hashtag}_{i}',
-            'full_name': f'Coach {i}',
-            'followers': 15000 + (i * 1000),
-            'following': 500 + (i * 10),
-            'posts_count': 200 + (i * 5),
-            'bio': f'Business coach helping entrepreneurs scale to 6-figures. Premium coaching programs available.',
-            'niche': 'business',
-            'engagement_rate': 3.5 + (i * 0.1),
-            'coach_score': 8.0 + (i * 0.1),
-            'value_score': 7.5 + (i * 0.1)
+@app.get("/api/prospects")
+async def get_prospects(
+    page: int = 1,
+    per_page: int = 20,
+    status: Optional[str] = None,
+    niche: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        query = db.query(Prospect)
+        
+        if status:
+            try:
+                status_enum = ProspectStatus(status)
+                query = query.filter(Prospect.status == status_enum)
+            except ValueError:
+                pass
+        
+        if niche:
+            query = query.filter(Prospect.niche.ilike(f'%{niche}%'))
+        
+        total = query.count()
+        prospects = query.order_by(Prospect.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        
+        pages = (total + per_page - 1) // per_page
+        
+        return {
+            'prospects': [ProspectResponse.from_orm(p) for p in prospects],
+            'total': total,
+            'pages': pages,
+            'current_page': page
         }
-        for i in range(min(limit, 10))  # Limit to 10 for demo
-    ]
-    
-    created_count = 0
-    for prospect_data in mock_prospects:
-        existing = Prospect.query.filter_by(username=prospect_data['username']).first()
-        if not existing:
-            prospect = Prospect(**prospect_data)
-            prospect.status = ProspectStatus.QUALIFIED if prospect.coach_score > 7 else ProspectStatus.DISCOVERED
-            db.session.add(prospect)
-            created_count += 1
-    
-    db.session.commit()
-    
-    return jsonify({
-        'message': f'Scraped {len(mock_prospects)} prospects from #{hashtag}',
-        'created': created_count,
-        'prospects': mock_prospects
-    })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/prospects/<int:prospect_id>/send-message', methods=['POST'])
-@jwt_required()
-def send_message_to_prospect(prospect_id):
-    prospect = Prospect.query.get_or_404(prospect_id)
-    
-    if prospect.dm_sent:
-        return jsonify({'error': 'Message already sent to this prospect'}), 400
-    
-    prospect_data = {
-        'username': prospect.username,
-        'full_name': prospect.full_name,
-        'niche': prospect.niche,
-        'followers': prospect.followers
-    }
-    
-    message_content = MessageTemplates.get_personalized_message(prospect_data)
-    
-    prospect.dm_sent = True
-    prospect.dm_sent_at = datetime.utcnow()
-    prospect.status = ProspectStatus.MESSAGED
-    
-    message = Message(
-        prospect_id=prospect.id,
-        campaign_id=1,  # Default campaign for demo
-        content=message_content
-    )
-    db.session.add(message)
-    db.session.commit()
-    
-    return jsonify({
-        'message': 'Message sent successfully',
-        'content': message_content
-    })
+@app.get("/api/campaigns", response_model=List[CampaignResponse])
+async def get_campaigns(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        campaigns = db.query(Campaign).order_by(Campaign.created_at.desc()).all()
+        return [CampaignResponse.from_orm(c) for c in campaigns]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/analytics/performance')
-@jwt_required()
-def analytics_performance():
-    thirty_days_ago = datetime.now() - timedelta(days=30)
+@app.post("/api/campaigns", response_model=CampaignResponse)
+async def create_campaign(
+    campaign: CampaignCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        db_campaign = Campaign(**campaign.dict())
+        db.add(db_campaign)
+        db.commit()
+        db.refresh(db_campaign)
+        return CampaignResponse.from_orm(db_campaign)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def run_campaign_background(campaign_id: int, db: Session):
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign and campaign.instagram_account_id:
+            bot = ApifyInstagramBot(account_id=campaign.instagram_account_id)
+        else:
+            best_account = ApifyInstagramBot.select_best_available_account()
+            if best_account:
+                bot = ApifyInstagramBot(account_id=best_account.id)
+            else:
+                instagram_session_id = os.getenv('INSTAGRAM_SESSION_ID')
+                if instagram_session_id:
+                    bot = ApifyInstagramBot(session_id=instagram_session_id)
+                else:
+                    print("No Instagram accounts available and INSTAGRAM_SESSION_ID not set")
+                    return
+        
+        bot.run_campaign(campaign_id)
+    except Exception as e:
+        print(f"Campaign error: {str(e)}")
+
+@app.post("/api/campaigns/{campaign_id}/start")
+async def start_campaign(
+    campaign_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        if campaign.status == CampaignStatus.ACTIVE:
+            raise HTTPException(status_code=400, detail="Campaign is already active")
+        
+        campaign.status = CampaignStatus.ACTIVE
+        db.commit()
+        
+        background_tasks.add_task(run_campaign_background, campaign_id, db)
+        
+        return {"message": "Campaign started successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/campaigns/{campaign_id}/pause")
+async def pause_campaign(
+    campaign_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        campaign.status = CampaignStatus.PAUSED
+        db.commit()
+        return {"message": "Campaign paused successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scrape/hashtag")
+async def scrape_hashtag(
+    request: HashtagScrapeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        hashtag = request.hashtag
+        max_posts = request.max_posts
+        
+        if not hashtag:
+            raise HTTPException(status_code=400, detail="Hashtag is required")
+        
+        bot = ApifyInstagramBot()
+        prospects = bot.scrape_hashtag(hashtag, max_posts)
+        
+        saved_count = 0
+        for prospect_data in prospects:
+            existing = db.query(Prospect).filter(Prospect.username == prospect_data['username']).first()
+            if not existing:
+                prospect = Prospect(**prospect_data)
+                db.add(prospect)
+                saved_count += 1
+        
+        db.commit()
+        
+        return {
+            'message': f'Scraped {len(prospects)} prospects, saved {saved_count} new ones',
+            'total_scraped': len(prospects),
+            'new_prospects': saved_count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/prospects/{prospect_id}/send-message")
+async def send_message_to_prospect(
+    prospect_id: int,
+    request: MessageSendRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
+        if not prospect:
+            raise HTTPException(status_code=404, detail="Prospect not found")
+        
+        if prospect.dm_sent:
+            raise HTTPException(status_code=400, detail="Message already sent to this prospect")
+        
+        prospect_data = {
+            'username': prospect.username,
+            'full_name': prospect.full_name,
+            'niche': prospect.niche,
+            'followers': prospect.followers
+        }
+        
+        message_content = MessageTemplates.get_personalized_message(prospect_data)
+        
+        bot = ApifyInstagramBot()
+        success = bot.send_dm(prospect.username, message_content)
+        
+        if success:
+            prospect.dm_sent = True
+            prospect.dm_sent_at = datetime.utcnow()
+            prospect.status = ProspectStatus.MESSAGED
+            
+            message = Message(
+                prospect_id=prospect.id,
+                campaign_id=1,
+                content=message_content
+            )
+            db.add(message)
+            db.commit()
+            
+            return {"message": "Message sent successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send message")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     
-    daily_stats = db.session.query(
-        db.func.date(Message.sent_at).label('date'),
-        db.func.count(Message.id).label('messages_sent')
-    ).filter(
-        Message.sent_at >= thirty_days_ago
-    ).group_by(
-        db.func.date(Message.sent_at)
-    ).all()
-    
-    niche_stats = db.session.query(
-        Prospect.niche,
-        db.func.count(Prospect.id).label('count')
-    ).group_by(Prospect.niche).all()
-    
-    return jsonify({
-        'daily_messages': [
-            {'date': stat.date.isoformat(), 'messages': stat.messages_sent}
-            for stat in daily_stats
-        ],
-        'niche_distribution': [
-            {'niche': stat.niche or 'unknown', 'count': stat.count}
-            for stat in niche_stats
-        ]
-    })
+@app.post("/api/send-message")
+async def send_message(
+    request: MessageSendRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        prospect = db.query(Prospect).filter(Prospect.id == request.prospect_id).first()
+        if not prospect:
+            raise HTTPException(status_code=404, detail="Prospect not found")
+        
+        bot = ApifyInstagramBot()
+        success = bot.send_dm(prospect.username, request.message)
+        
+        if success:
+            prospect.dm_sent = True
+            prospect.dm_sent_at = datetime.utcnow()
+            prospect.status = ProspectStatus.MESSAGED
+            
+            message = Message(
+                prospect_id=prospect.id,
+                campaign_id=1,
+                content=request.message
+            )
+            db.add(message)
+            db.commit()
+            
+            return {"message": "Message sent successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send message")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/performance", response_model=AnalyticsData)
+async def analytics_performance(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        total_prospects = db.query(Prospect).count()
+        qualified_prospects = db.query(Prospect).filter(Prospect.status == ProspectStatus.QUALIFIED).count()
+        messages_sent = db.query(Message).count()
+        responses_received = db.query(Prospect).filter(Prospect.response_received == True).count()
+        conversions = db.query(Message).filter(Message.is_conversion == True).count()
+        
+        conversion_rate = (conversions / messages_sent * 100) if messages_sent > 0 else 0
+        response_rate = (responses_received / messages_sent * 100) if messages_sent > 0 else 0
+        
+        daily_stats = []
+        for i in range(7):
+            date_filter = datetime.utcnow().date() - timedelta(days=i)
+            daily_messages = db.query(Message).filter(func.date(Message.sent_at) == date_filter).count()
+            daily_stats.append({
+                'date': date_filter.isoformat(),
+                'messages_sent': daily_messages
+            })
+        
+        return AnalyticsData(
+            total_prospects=total_prospects,
+            qualified_prospects=qualified_prospects,
+            messages_sent=messages_sent,
+            responses_received=responses_received,
+            conversions=conversions,
+            conversion_rate=round(conversion_rate, 2),
+            response_rate=round(response_rate, 2),
+            daily_stats=daily_stats
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.route('/api/instagram-accounts')
-@jwt_required()
-def get_instagram_accounts():
-    accounts = InstagramAccount.query.order_by(InstagramAccount.created_at.desc()).all()
-    
-    return jsonify([{
-        'id': acc.id,
-        'username': acc.username,
-        'is_active': acc.is_active,
-        'daily_messages_sent': acc.daily_messages_sent,
-        'daily_limit': acc.daily_limit,
-        'account_status': acc.account_status,
-        'last_activity': acc.last_activity.isoformat() if acc.last_activity else None,
-        'remaining_today': ApifyInstagramBot.get_account_daily_remaining(acc.id),
-        'created_at': acc.created_at.isoformat()
-    } for acc in accounts])
+@app.get("/api/instagram-accounts", response_model=List[InstagramAccountResponse])
+async def get_instagram_accounts(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        accounts = db.query(InstagramAccount).order_by(InstagramAccount.created_at.desc()).all()
+        return [InstagramAccountResponse.from_orm(a) for a in accounts]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/instagram-accounts', methods=['POST'])
-@jwt_required()
-def create_instagram_account():
-    data = request.get_json()
-    
-    if not data.get('username') or not data.get('session_id'):
-        return jsonify({'error': 'Username and session_id are required'}), 400
-    
-    existing = InstagramAccount.query.filter_by(username=data['username']).first()
-    if existing:
-        return jsonify({'error': 'Account with this username already exists'}), 400
-    
-    account = InstagramAccount(
-        username=data['username'],
-        session_id=data['session_id'],
-        daily_limit=data.get('daily_limit', 40),
-        is_active=data.get('is_active', True)
-    )
-    
-    db.session.add(account)
-    db.session.commit()
-    
-    return jsonify({
-        'id': account.id,
-        'message': f'Instagram account {account.username} created successfully'
-    })
+@app.post("/api/instagram-accounts", response_model=InstagramAccountResponse)
+async def create_instagram_account(
+    account: InstagramAccountCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        existing = db.query(InstagramAccount).filter(InstagramAccount.username == account.username).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Account with this username already exists")
+        
+        db_account = InstagramAccount(**account.dict())
+        db.add(db_account)
+        db.commit()
+        db.refresh(db_account)
+        return InstagramAccountResponse.from_orm(db_account)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/instagram-accounts/<int:account_id>', methods=['PUT'])
-@jwt_required()
-def update_instagram_account(account_id):
-    account = InstagramAccount.query.get_or_404(account_id)
-    data = request.get_json()
-    
-    if 'session_id' in data:
-        account.session_id = data['session_id']
-    if 'daily_limit' in data:
-        account.daily_limit = data['daily_limit']
-    if 'is_active' in data:
-        account.is_active = data['is_active']
-    if 'account_status' in data:
-        account.account_status = data['account_status']
-    
-    db.session.commit()
-    
-    return jsonify({'message': f'Account {account.username} updated successfully'})
+@app.put("/api/instagram-accounts/{account_id}")
+async def update_instagram_account(
+    account_id: int,
+    account_data: InstagramAccountCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        account = db.query(InstagramAccount).filter(InstagramAccount.id == account_id).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        for field, value in account_data.dict(exclude_unset=True).items():
+            setattr(account, field, value)
+        
+        db.commit()
+        return {"message": f"Account {account.username} updated successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/instagram-accounts/<int:account_id>', methods=['DELETE'])
-@jwt_required()
-def delete_instagram_account(account_id):
-    account = InstagramAccount.query.get_or_404(account_id)
-    
-    active_campaigns = Campaign.query.filter_by(
-        instagram_account_id=account_id,
-        status=CampaignStatus.ACTIVE
-    ).count()
-    
-    if active_campaigns > 0:
-        return jsonify({
-            'error': f'Cannot delete account. It is being used by {active_campaigns} active campaign(s)'
-        }), 400
-    
-    username = account.username
-    db.session.delete(account)
-    db.session.commit()
-    
-    return jsonify({'message': f'Account {username} deleted successfully'})
+@app.delete("/api/instagram-accounts/{account_id}")
+async def delete_instagram_account(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        account = db.query(InstagramAccount).filter(InstagramAccount.id == account_id).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        active_campaigns = db.query(Campaign).filter(
+            Campaign.instagram_account_id == account_id,
+            Campaign.status == CampaignStatus.ACTIVE
+        ).count()
+        
+        if active_campaigns > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete account. It is being used by {active_campaigns} active campaign(s)"
+            )
+        
+        username = account.username
+        db.delete(account)
+        db.commit()
+        
+        return {"message": f"Account {username} deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/instagram-accounts/<int:account_id>/test', methods=['POST'])
-@jwt_required()
-def test_instagram_account(account_id):
-    """Test if an Instagram account's session ID is still valid"""
+@app.post("/api/instagram-accounts/{account_id}/test")
+async def test_instagram_account(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     try:
         bot = ApifyInstagramBot(account_id=account_id)
         
-        account = InstagramAccount.query.get(account_id)
-        account.last_activity = datetime.utcnow()
-        db.session.commit()
+        account = db.query(InstagramAccount).filter(InstagramAccount.id == account_id).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
         
-        return jsonify({
+        account.last_activity = datetime.utcnow()
+        db.commit()
+        
+        return {
             'status': 'success',
             'message': f'Account {account.username} session appears valid'
-        })
+        }
         
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'Account test failed: {str(e)}'
-        }), 400
+        raise HTTPException(
+            status_code=400,
+            detail=f"Account test failed: {str(e)}"
+        )
 
-@app.route('/api/coolify-configs')
-@jwt_required()
-def get_coolify_configs():
-    configs = CoolifyConfig.query.filter_by(is_active=True).all()
-    return jsonify([{
-        'id': c.id,
-        'name': c.name,
-        'api_url': c.api_url,
-        'team_id': c.team_id,
-        'created_at': c.created_at.isoformat()
-    } for c in configs])
-
-@app.route('/api/coolify-configs', methods=['POST'])
-@jwt_required()
-def create_coolify_config():
-    data = request.get_json()
-    
-    config = CoolifyConfig(
-        name=data['name'],
-        api_url=data['api_url'],
-        api_token=data['api_token'],
-        team_id=data.get('team_id')
-    )
-    
-    db.session.add(config)
-    db.session.commit()
-    
-    return jsonify({'id': config.id, 'message': 'Coolify config created successfully'})
-
-@app.route('/api/deployments')
-@jwt_required()
-def get_deployments():
-    deployments = Deployment.query.order_by(Deployment.created_at.desc()).all()
-    
-    return jsonify([{
-        'id': d.id,
-        'name': d.name,
-        'github_url': d.github_url,
-        'project_type': d.project_type,
-        'status': d.status.value,
-        'deployment_url': d.deployment_url,
-        'coolify_config': {
-            'id': d.coolify_config.id,
-            'name': d.coolify_config.name
-        } if d.coolify_config else None,
-        'created_at': d.created_at.isoformat()
-    } for d in deployments])
-
-@app.route('/api/deployments', methods=['POST'])
-@jwt_required()
-def create_deployment():
-    data = request.get_json()
-    
-    deployment = Deployment(
-        name=data['name'],
-        github_url=data['github_url'],
-        coolify_config_id=data['coolify_config_id'],
-        environment_variables=json.dumps(data.get('environment_variables', {}))
-    )
-    
-    db.session.add(deployment)
-    db.session.commit()
-    
+@app.get("/api/coolify/configs", response_model=List[CoolifyConfigResponse])
+async def get_coolify_configs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        coolify_service = CoolifyService(deployment.coolify_config_id)
-        if coolify_service.create_application(deployment):
-            coolify_service.deploy_application(deployment)
+        configs = db.query(CoolifyConfig).filter(CoolifyConfig.is_active == True).all()
+        return [CoolifyConfigResponse.from_orm(c) for c in configs]
     except Exception as e:
-        deployment.status = DeploymentStatus.FAILED
-        db.session.commit()
-        return jsonify({'error': f'Deployment failed: {str(e)}'}), 500
-    
-    return jsonify({'id': deployment.id, 'message': 'Deployment started successfully'})
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/deployments/<int:deployment_id>/status')
-@jwt_required()
-def get_deployment_status(deployment_id):
-    deployment = Deployment.query.get_or_404(deployment_id)
-    
+@app.post("/api/coolify/configs", response_model=CoolifyConfigResponse)
+async def create_coolify_config(
+    config: CoolifyConfigCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     try:
-        coolify_service = CoolifyService(deployment.coolify_config_id)
+        db_config = CoolifyConfig(**config.dict())
+        db.add(db_config)
+        db.commit()
+        db.refresh(db_config)
+        return CoolifyConfigResponse.from_orm(db_config)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/deployments", response_model=List[DeploymentResponse])
+async def get_deployments(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        deployments = db.query(Deployment).order_by(Deployment.created_at.desc()).all()
+        return [DeploymentResponse.from_orm(d) for d in deployments]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/deployments", response_model=DeploymentResponse)
+async def create_deployment(
+    deployment: DeploymentCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        coolify_config = db.query(CoolifyConfig).filter(CoolifyConfig.id == deployment.coolify_config_id).first()
+        if not coolify_config:
+            raise HTTPException(status_code=404, detail="Coolify config not found")
+        
+        coolify_service = CoolifyService(coolify_config.api_url, coolify_config.api_token)
+        
+        db_deployment = Deployment(**deployment.dict())
+        db.add(db_deployment)
+        db.commit()
+        db.refresh(db_deployment)
+        
+        try:
+            app_id = coolify_service.create_application(
+                name=deployment.name,
+                github_url=deployment.github_url,
+                environment_variables=deployment.environment_variables
+            )
+            
+            db_deployment.coolify_app_id = app_id
+            db_deployment.status = DeploymentStatus.BUILDING
+            db.commit()
+            
+        except Exception as deploy_error:
+            db_deployment.status = DeploymentStatus.FAILED
+            db.commit()
+            raise HTTPException(status_code=500, detail=f"Deployment failed: {str(deploy_error)}")
+        
+        return DeploymentResponse.from_orm(db_deployment)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/deployments/{deployment_id}/status")
+async def get_deployment_status(
+    deployment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+        
+        coolify_service = CoolifyService(deployment.coolify_config.api_url, deployment.coolify_config.api_token)
         status_info = coolify_service.get_deployment_status(deployment)
-        return jsonify(status_info)
+        return status_info
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/deployments/<int:deployment_id>/environment-variables', methods=['PUT'])
-@jwt_required()
-def update_deployment_env_vars(deployment_id):
-    deployment = Deployment.query.get_or_404(deployment_id)
-    data = request.get_json()
-    
+@app.put("/api/deployments/{deployment_id}/environment-variables")
+async def update_deployment_env_vars(
+    deployment_id: int,
+    env_vars: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     try:
-        coolify_service = CoolifyService(deployment.coolify_config_id)
-        if coolify_service.update_environment_variables(deployment, data['environment_variables']):
-            return jsonify({'message': 'Environment variables updated successfully'})
-        else:
-            return jsonify({'error': 'Failed to update environment variables'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/deployments/<int:deployment_id>/detect-project', methods=['POST'])
-@jwt_required()
-def detect_project_type(deployment_id):
-    deployment = Deployment.query.get_or_404(deployment_id)
-    
-    try:
-        coolify_service = CoolifyService(deployment.coolify_config_id)
-        project_type, detection_info = coolify_service.detect_project_type(deployment.github_url)
+        deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
         
-        return jsonify({
-            'project_type': project_type,
-            'detection_info': detection_info
-        })
+        coolify_service = CoolifyService(deployment.coolify_config.api_url, deployment.coolify_config.api_token)
+        if coolify_service.update_environment_variables(deployment, env_vars):
+            return {"message": "Environment variables updated successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update environment variables")
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=8001)
+@app.post("/api/deployments/{deployment_id}/detect-project")
+async def detect_project_type(
+    deployment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+        
+        coolify_service = CoolifyService(deployment.coolify_config.api_url, deployment.coolify_config.api_token)
+        project_type = coolify_service.detect_project_type(deployment.github_url)
+        
+        deployment.project_type = project_type
+        db.commit()
+        
+        return {
+            'project_type': project_type,
+            'message': f'Detected project type: {project_type}'
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)

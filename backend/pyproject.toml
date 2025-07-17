@@ -8,16 +8,16 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.12"
 fastapi = {extras = ["standard"], version = "^0.116.1"}
+uvicorn = {extras = ["standard"], version = "^0.32.1"}
+sqlalchemy = "^2.0.36"
 psycopg = {extras = ["binary"], version = "^3.2.9"}
 requests = "^2.32.4"
 pandas = "^2.3.1"
 openai = "^1.95.1"
 python-dotenv = "^1.1.1"
-flask = "^3.1.1"
-flask-cors = "^6.0.1"
-flask-sqlalchemy = "^3.1.1"
-flask-jwt-extended = "^4.7.1"
-gunicorn = "^23.0.0"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-multipart = "^0.0.18"
 apify-client = "^1.12.0"
 
 

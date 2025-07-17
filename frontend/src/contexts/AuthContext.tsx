@@ -35,13 +35,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
-      const formData = new URLSearchParams();
-      formData.append('username', username);
-      formData.append('password', password);
-      
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, formData, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
+        username,
+        password
+      }, {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/json'
         }
       });
 

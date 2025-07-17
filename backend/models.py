@@ -1,8 +1,14 @@
-from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, Float, ForeignKey, Enum as SQLEnum, Date
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 from enum import Enum
+import os
 
-db = SQLAlchemy()
+DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///coach_outreach.db')
+engine = create_engine(DATABASE_URL, echo=False)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
 class ProspectStatus(Enum):
     DISCOVERED = "discovered"
@@ -13,93 +19,104 @@ class ProspectStatus(Enum):
     REJECTED = "rejected"
 
 class CampaignStatus(Enum):
+    DRAFT = "draft"
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
 
-class Prospect(db.Model):
+class Prospect(Base):
     __tablename__ = 'prospects'
     
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), unique=True, nullable=False)
-    full_name = db.Column(db.String(200))
-    followers = db.Column(db.Integer, nullable=False)
-    following = db.Column(db.Integer)
-    posts_count = db.Column(db.Integer)
-    engagement_rate = db.Column(db.Float)
-    bio = db.Column(db.Text)
-    coach_score = db.Column(db.Float, default=0.0)
-    value_score = db.Column(db.Float, default=0.0)
-    niche = db.Column(db.String(100))
-    status = db.Column(db.Enum(ProspectStatus), default=ProspectStatus.DISCOVERED)
-    dm_sent = db.Column(db.Boolean, default=False)
-    dm_sent_at = db.Column(db.DateTime)
-    response_received = db.Column(db.Boolean, default=False)
-    response_received_at = db.Column(db.DateTime)
-    profile_url = db.Column(db.String(500))
-    profile_pic_url = db.Column(db.String(500))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    username = Column(String(100), unique=True, nullable=False)
+    full_name = Column(String(200))
+    followers = Column(Integer, nullable=False)
+    following = Column(Integer)
+    posts_count = Column(Integer)
+    engagement_rate = Column(Float)
+    bio = Column(Text)
+    coach_score = Column(Float, default=0.0)
+    value_score = Column(Float, default=0.0)
+    niche = Column(String(100))
+    status = Column(SQLEnum(ProspectStatus), default=ProspectStatus.DISCOVERED)
+    dm_sent = Column(Boolean, default=False)
+    dm_sent_at = Column(DateTime)
+    response_received = Column(Boolean, default=False)
+    response_received_at = Column(DateTime)
+    notes = Column(Text)
+    profile_url = Column(String(500))
+    profile_pic_url = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    messages = db.relationship('Message', backref='prospect', lazy=True)
+    messages = relationship('Message', back_populates='prospect')
 
-class Campaign(db.Model):
+class Campaign(Base):
     __tablename__ = 'campaigns'
     
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text)
-    hashtags = db.Column(db.Text)  # JSON string of hashtags
-    target_accounts = db.Column(db.Text)  # JSON string of target accounts
-    instagram_account_id = db.Column(db.Integer, db.ForeignKey('instagram_accounts.id'), nullable=True)  # Link to Instagram account
-    status = db.Column(db.Enum(CampaignStatus), default=CampaignStatus.ACTIVE)
-    messages_sent = db.Column(db.Integer, default=0)
-    responses_received = db.Column(db.Integer, default=0)
-    conversions = db.Column(db.Integer, default=0)
-    daily_limit = db.Column(db.Integer, default=50)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text)
+    hashtags = Column(Text)
+    target_accounts = Column(Text)
+    instagram_account_id = Column(Integer, ForeignKey('instagram_accounts.id'), nullable=True)
+    status = Column(SQLEnum(CampaignStatus), default=CampaignStatus.ACTIVE)
+    messages_sent = Column(Integer, default=0)
+    responses_received = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)
+    daily_limit = Column(Integer, default=50)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    messages = db.relationship('Message', backref='campaign', lazy=True)
+    messages = relationship('Message', back_populates='campaign')
+    instagram_account = relationship('InstagramAccount', back_populates='campaigns')
 
-class Message(db.Model):
+class Message(Base):
     __tablename__ = 'messages'
     
-    id = db.Column(db.Integer, primary_key=True)
-    prospect_id = db.Column(db.Integer, db.ForeignKey('prospects.id'), nullable=False)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
-    content = db.Column(db.Text, nullable=False)
-    sent_at = db.Column(db.DateTime, default=datetime.utcnow)
-    response_at = db.Column(db.DateTime)
-    response_content = db.Column(db.Text)
-    message_type = db.Column(db.String(50), default='initial')  # initial, follow_up
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    prospect_id = Column(Integer, ForeignKey('prospects.id'), nullable=False)
+    campaign_id = Column(Integer, ForeignKey('campaigns.id'), nullable=False)
+    content = Column(Text, nullable=False)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+    response_at = Column(DateTime)
+    response_content = Column(Text)
+    response_received_at = Column(DateTime)
+    message_type = Column(String(50), default='initial')
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_conversion = Column(Boolean, default=False)
+    
+    prospect = relationship('Prospect', back_populates='messages')
+    campaign = relationship('Campaign', back_populates='messages')
 
-class User(db.Model):
+class User(Base):
     __tablename__ = 'users'
     
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128))
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    username = Column(String(80), unique=True, nullable=False)
+    email = Column(String(120), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime)
 
-class InstagramAccount(db.Model):
+class InstagramAccount(Base):
     __tablename__ = 'instagram_accounts'
     
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), unique=True, nullable=False)
-    session_id = db.Column(db.Text, nullable=False)  # Instagram session ID for Apify
-    is_active = db.Column(db.Boolean, default=True)
-    daily_messages_sent = db.Column(db.Integer, default=0)
-    daily_limit = db.Column(db.Integer, default=40)  # Max messages per day for this account
-    last_activity = db.Column(db.DateTime)
-    last_reset_date = db.Column(db.Date, default=datetime.utcnow().date)  # Track daily limit resets
-    account_status = db.Column(db.String(50), default='active')  # active, suspended, limited
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    username = Column(String(100), unique=True, nullable=False)
+    session_id = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True)
+    daily_messages_sent = Column(Integer, default=0)
+    daily_limit = Column(Integer, default=40)
+    last_activity = Column(DateTime)
+    last_reset_date = Column(Date, default=datetime.utcnow().date)
+    account_status = Column(String(50), default='active')
+    created_at = Column(DateTime, default=datetime.utcnow)
+    notes = Column(Text)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    campaigns = db.relationship('Campaign', backref='instagram_account', lazy=True)
+    campaigns = relationship('Campaign', back_populates='instagram_account')
 
 class DeploymentStatus(Enum):
     PENDING = "pending"
@@ -109,31 +126,34 @@ class DeploymentStatus(Enum):
     FAILED = "failed"
     STOPPED = "stopped"
 
-class CoolifyConfig(db.Model):
+class CoolifyConfig(Base):
     __tablename__ = 'coolify_configs'
     
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    api_url = db.Column(db.String(500), nullable=False)  # Coolify instance URL
-    api_token = db.Column(db.Text, nullable=False)  # Coolify API token
-    team_id = db.Column(db.String(100))  # Coolify team ID
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    api_url = Column(String(500), nullable=False)
+    api_token = Column(Text, nullable=False)
+    team_id = Column(String(100))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    deployments = db.relationship('Deployment', backref='coolify_config', lazy=True)
+    deployments = relationship('Deployment', back_populates='coolify_config')
 
-class Deployment(db.Model):
+class Deployment(Base):
     __tablename__ = 'deployments'
     
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(200), nullable=False)
-    github_url = db.Column(db.String(500), nullable=False)
-    project_type = db.Column(db.String(50), default='unknown')  # nodejs, python, docker, etc.
-    coolify_config_id = db.Column(db.Integer, db.ForeignKey('coolify_configs.id'), nullable=False)
-    coolify_app_id = db.Column(db.String(100))  # Coolify application ID
-    status = db.Column(db.Enum(DeploymentStatus), default=DeploymentStatus.PENDING)
-    build_logs = db.Column(db.Text)
-    deployment_url = db.Column(db.String(500))
-    environment_variables = db.Column(db.Text)  # JSON string of env vars
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), nullable=False)
+    github_url = Column(String(500), nullable=False)
+    project_type = Column(String(50), default='unknown')
+    coolify_config_id = Column(Integer, ForeignKey('coolify_configs.id'), nullable=False)
+    coolify_app_id = Column(String(100))
+    status = Column(SQLEnum(DeploymentStatus), default=DeploymentStatus.PENDING)
+    build_logs = Column(Text)
+    deployment_url = Column(String(500))
+    environment_variables = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    coolify_config = relationship('CoolifyConfig', back_populates='deployments')

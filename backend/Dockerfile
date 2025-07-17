@@ -31,4 +31,4 @@ RUN mkdir -p /app/data
 EXPOSE 8001
 
 # Run the application
-CMD ["python", "app/main.py"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
